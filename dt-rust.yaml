@@ -198,6 +198,11 @@
         - name: resolution-hz # The resolution of this RTC in Hz. This value represents the finest time granularity the hardware can store.
           type: Int
 
+# Rec: Unfortunately it looks like there isn't a single property we can check for all fuel gauges,
+# but I don't want to manually list every single fuel gauge compatible here either. For now
+# I think it's fine to just list the sbs compatible (and remove fuel-gauge-emul since that won't
+# be upstreamed) and make a note in the PR description of this limitation and that maybe some other way
+# will have to be explored in the future to automatically make this work for all fuel gauges.
 # Matcher for `FuelGauge` from fuel_gauge.rs.
 - name: fuel-gauge
   cfg: CONFIG_FUEL_GAUGE

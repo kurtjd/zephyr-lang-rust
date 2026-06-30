@@ -1,16 +1,39 @@
 //! Device wrapper for a fuel gauge.
 
+//  General recommendations:
+// -Clean up comments/docstrings (remove TODOs, clearly document units of returned values in a cohesive way, etc)
+// -Run cargo fmt on your code
+// -You didn't add wrappers for the plural get/set props functions, which I agree with.
+//  I think they are only really necessary if in user mode to batch get/set in a single syscall,
+//  but I don't think there is strong need to support that yet, and doing so in idiomatic Rust
+//  with type safety could be difficult. Just explain in your PR your reasoning for not including them.
+//
+// Final recommendation: Add a minimal fuel_gauge sample in samples to just show the basics of how this works.
+
 /// A fuel gauge device.
 /// u_Note: make a good comment here eventually
 pub struct FuelGauge {
     device: *const crate::raw::device,
 }
 
-#[repr(u32)]    
+// Note: So it's a good call having some wrapper here around the raw prop values, even if used internally,
+// but I'm 50/50 on whether this approach is right or if it's better to do something like:
+// `pub(crate) struct FuelGaugeProp(u16)` which would still provide a type safe wrapper around the raw
+// values for internal use without needing to duplicate all the enum values here. It could be used in
+// the wrappers like:
+//
+// self.get_prop(FuelGaugeProp(crate::raw::fuel_gauge_prop_type_FUEL_GAUGE_AVG_CURRENT))...
+//
+// Though there is still value in your current approach in that it makes it even more idiot proof
+// if others were to modify this in the future, hence I will leave it up to you to decide
+#[repr(u32)]
 pub(crate) enum FuelGaugeProp {
     AvgCurrent = crate::raw::fuel_gauge_prop_type_FUEL_GAUGE_AVG_CURRENT,
+
+    // Rec: Swap the below two lines so they are in proper enum order (and double check others are in order)
     Cutoff = crate::raw::fuel_gauge_prop_type_FUEL_GAUGE_CHARGE_CUTOFF,
     Current = crate::raw::fuel_gauge_prop_type_FUEL_GAUGE_CURRENT,
+
     CycleCount = crate::raw::fuel_gauge_prop_type_FUEL_GAUGE_CYCLE_COUNT,
     ConnectState = crate::raw::fuel_gauge_prop_type_FUEL_GAUGE_CONNECT_STATE,
     Flags = crate::raw::fuel_gauge_prop_type_FUEL_GAUGE_FLAGS,
@@ -52,6 +75,7 @@ pub(crate) enum FuelGaugeProp {
     StateOfHealth = crate::raw::fuel_gauge_prop_type_FUEL_GAUGE_STATE_OF_HEALTH,
 }
 
+// Same note/rec about FuelGaugeProp
 #[repr(u32)]
 pub(crate) enum FuelGaugeBufferProp {
     ManufacturerName = crate::raw::fuel_gauge_prop_type_FUEL_GAUGE_MANUFACTURER_NAME,
@@ -63,18 +87,31 @@ pub(crate) enum FuelGaugeBufferProp {
 // This impl block contains wrappers around the raw/unsafe Zephyr Fuel Gauge API.
 // These functions are private to this crate. The public/abstracted getters/setters (which wrap around these private functions) are located in FuelGauge impl block 2.
 impl FuelGauge {
+    // Note: gpio and flash have allow(dead_code) here and other spots, but likely unnecessary
+    // since device.rs has a blanket allow(dead_code) for whole module so dont think we need it here
     /// Constructor, used by the devicetree generated code.
     pub(crate) unsafe fn new(
         unique: &crate::device::Unique,
         _static: &crate::device::NoStatic,
         device: *const crate::raw::device,
     ) -> Option<FuelGauge> {
+        // Rec/nit: I know gpio/flash do this but needless `returns` in rust bother me :P
+        // Can also be rewritten as:
+        // if !unique.once() { None } else { Some(FuelGauge { device }) }
         if !unique.once() { return None; }
         Some(FuelGauge { device })
     }
 
+    // Rec: We should probably add an is_ready method here to mirror gpio.rs
+    // flash.rs doesn't have one, but I think all devices should. Really though,
+    // I think it would be better for the `fn new()` above on all device wrapeprs
+    // to do the ready check internally (and not make it pub) and return a Result instead of an Option,
+    // but that is a slightly bigger change and we should just conform to the already
+    // existing pattern for now.
+
     /// Private helper function to get a fuel gauge prop value.
     pub(crate) fn get_prop(&self, prop: FuelGaugeProp) -> crate::error::Result<crate::raw::fuel_gauge_prop_val> {
+        // Thought: Does it make sense to use zeroed() here instead of MaybeUninit to be consistent with set_prop?
         let mut buffer = core::mem::MaybeUninit::<crate::raw::fuel_gauge_prop_val>::uninit();
 
         crate::error::to_result_void(
@@ -103,6 +140,10 @@ impl FuelGauge {
     /// Private helper function to get a fuel gauge buffer prop value.
     pub(crate) fn get_buffer_prop(&self, prop: FuelGaugeBufferProp, buffer: &mut [u8]) -> crate::error::Result<()> {
         crate::error::to_result_void(
+            // Rec: If you take my advice and have the buffer wrapper methods return the fixed buffer
+            // instead of taking a slice from the user, the saftey comment here would change sligtly,
+            // since you can say its guaranteed safe since we always pass a correct sized buffer
+            // internally to this call.
             // SAFETY: - `self.device` lives for the entire duration of `self`.
             //         - `prop` is a copy owned by this function.
             //         - `buffer.as_mut_ptr()` is a valid pointer to a writable memory region
@@ -121,6 +162,9 @@ impl FuelGauge {
     }
 }
 
+// Rec: Prefer one impl block for a struct typically unless you need feature gate some methods.
+// Think it would be better to just merge with the above impl block
+
 // FuelGauge impl block 2.
 /// This block contains the main public getters/setters for FuelGauge.
 /// They provide a type-safe way to get and set the fuel gauge props included in Zephyr's Fuel Gauge API.
@@ -128,6 +172,20 @@ impl FuelGauge {
     // u_TODO: Will probably want to make these function comments more descriptive in the future.
     //         Zephyr has docs for `enum fuel_gauge_prop_type`, where each of the enums has a comment
     //         about the units being returned + any extra info.
+
+    // Rec: For the `get_buffer_prop` wrappers, I recommend experimenting to see if you can have them
+    // return the buffer instead of requiring the caller pass in a slice. Since these all use
+    // known, fixed size buffers it should be no problem to do statically. Bonus, see if you can
+    // come up with a clean way to return a string instead of a raw u8 buffer (though might be tricky).
+    //
+    // So for example you might be able to do:
+    // 
+    // const MANUFACTURER_NAME_SZ: usize = core::mem::size_of::<crate::raw::sbs_gauge_manufacturer_name>();
+    // pub fn manufacturer_name(&self) -> crate::error::Result<[u8; MANUFACTURER_NAME_SZ]> { ... }
+    //
+    // but preferrably return a string if it makes sense (perhaps a heapless::String). I'm not 100%
+    // the best approach here so whichever you choose, in the PR description, mention the other approach
+    // and why you chose the one you did so others can help decide.
 
     /// Reads the gauge's `manufacturer_name` into the provided buffer.
     /// According to Zephyr, manufacturer name is 1 byte of string length + 20 bytes of data (21 bytes total).
@@ -287,6 +345,13 @@ impl FuelGauge {
     /// 
     /// Zephyr notes: Battery Mode (flags).
     pub fn set_sbs_mode(&self, value: u16) -> crate::error::Result<()> {
+        // Rec: You repeat these 3 lines in all your setters. Consider having set_prop handle
+        // creating the zeroed union, and have set_prop take a closure instead of val
+        // where you set the field of the union to the val. It would look something like
+        // how in your get_prop wrappers in the map() call you use the closure to act on the union field.
+        // That way, you only get one unsafe per wrapper with the unsafe for creating the zeroed
+        // union factored out.
+
         // SAFETY: All union fields are primitive types, so zeroed memory is valid.
         let mut val: crate::raw::fuel_gauge_prop_val = unsafe { core::mem::zeroed() };
         
@@ -535,6 +600,8 @@ impl FuelGauge {
         self.get_prop(FuelGaugeProp::StateOfHealth).map(|val| unsafe { *val.state_of_health.as_ref() })
     }
 }
+
+// Note: Everything below should not be included in the initial upstream PR as it's too ODP-specific for now
 
 /// This enum lists the possible states of the Fuel Gauge's `CAPACITY_MODE` bit.
 /// A state of `1` (true/CentiWatt) indicates that the FuelGauge API will report capacity information in cW or cWh as appropriate.
