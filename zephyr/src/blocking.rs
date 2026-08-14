@@ -124,7 +124,7 @@ enum SlotState {
 struct Slot {
     /// Reserved for `k_queue`'s linkage while enqueued.
     _link: UnsafeCell<usize>,
-    /// Serializes access to the future's [`Shared`] state.
+    /// Keeps the future alive while a worker is using its memory.
     lock: SpinMutex<()>,
     /// The current [`SlotState`].
     state: AtomicU8,
