@@ -85,7 +85,7 @@ static SLOT_POOL: SlotPool = SlotPool::new();
 /// However, if a worker thread has already picked up the operation and begun executing it,
 /// canceling will **NOT** stop the blocking operation. It will still run to completion,
 /// but its result is simply discarded. Any side effects of the operation will still be seen.
-pub async fn run<F, R>(op: F) -> R
+pub fn run<F, R>(op: F) -> impl Future<Output = R>
 where
     F: FnOnce() -> R + Send + 'static,
     R: Send + 'static,
@@ -98,7 +98,6 @@ where
         slot: None,
         _pin: PhantomPinned,
     }
-    .await
 }
 
 /// [`Slot`] state, stored internally in an `AtomicU8`.
